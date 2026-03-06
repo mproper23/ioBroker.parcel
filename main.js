@@ -28,6 +28,8 @@ puppeteerExtra.use(StealthPlugin());
 const dhlDecrypt = require('./lib/dhldecrypt');
 const DHL_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const DHL_CLIENT_ID = '83471082-5c13-4fce-8dcb-19d2a3fca413';
+const DHL_BASIC_AUTH = 'Basic ' + Buffer.from(DHL_CLIENT_ID + ':').toString('base64');
 class Parcel extends utils.Adapter {
   /**
    * @param {Partial<utils.AdapterOptions>} [options={}]
@@ -544,7 +546,7 @@ class Parcel extends utils.Adapter {
                   'Content-Type': 'application/x-www-form-urlencoded',
                   Accept: 'application/json, text/plain, */*',
                   Origin: 'https://login.dhl.de',
-                  Authorization: 'Basic ODM0NzEwODItNWMxMy00ZmNlLThkY2ItMTlkMmEzZmNhNDEzOg==',
+                  Authorization: DHL_BASIC_AUTH,
                   'User-Agent': DHL_USER_AGENT,
                   'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
                 },
@@ -767,7 +769,7 @@ class Parcel extends utils.Adapter {
             'Content-Type': 'application/x-www-form-urlencoded',
             Accept: 'application/json, text/plain, */*',
             Origin: 'https://login.dhl.de',
-            Authorization: 'Basic ODM0NzEwODItNWMxMy00ZmNlLThkY2ItMTlkMmEzZmNhNDEzOg==',
+            Authorization: DHL_BASIC_AUTH,
             'User-Agent': DHL_USER_AGENT,
             'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
             'sec-fetch-site': 'same-origin',
@@ -3052,7 +3054,7 @@ class Parcel extends utils.Adapter {
   }
 
   async activateToken(grant_token, url) {
-    await this.dhlRequest({
+    await this.requestClient({
       method: 'post',
       url: url,
       headers: {
