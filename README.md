@@ -21,9 +21,8 @@ Verfolge mit deinem ioBroker SmartHome deine Pakete von Amazon, DHL, DPD, Hermes
 
 **DHL:**
 
-- DHL App Login eingeben
-- SMS/EMail Code erhalten
-- In die Instanzeinstellungen eingeben und speichern
+- DHL App E-Mail und Passwort eingeben
+- Login erfolgt automatisch via Puppeteer
 
 **Amazon:**
 
