@@ -2,12 +2,19 @@
  * Patcht Cookie.js fuer tough-cookie v5 Kompatibilitaet
  * Aufruf: node patch-cookie.js [pfad-zu-iobroker]
  * Beispiel: node patch-cookie.js C:\ioBroker
+ * Wird auch automatisch als postinstall ausgefuehrt.
  */
 const fs = require('fs');
 const path = require('path');
 
-const iobrokerDir = process.argv[2] || '.';
-const cookiePath = path.join(iobrokerDir, 'node_modules', 'iobroker.parcel', 'node_modules', 'node-tls-client', 'dist', 'lib', 'Cookie.js');
+// Wenn als postinstall aufgerufen: Cookie.js liegt relativ zum Adapter-Verzeichnis
+// Wenn manuell mit ioBroker-Pfad aufgerufen: Cookie.js liegt unter node_modules/iobroker.parcel/...
+const iobrokerDir = process.argv[2];
+const localPath = path.join(__dirname, 'node_modules', 'node-tls-client', 'dist', 'lib', 'Cookie.js');
+const globalPath = iobrokerDir
+  ? path.join(iobrokerDir, 'node_modules', 'iobroker.parcel', 'node_modules', 'node-tls-client', 'dist', 'lib', 'Cookie.js')
+  : null;
+const cookiePath = (globalPath && fs.existsSync(globalPath)) ? globalPath : localPath;
 
 if (!fs.existsSync(cookiePath)) {
   console.error('Cookie.js nicht gefunden: ' + cookiePath);
