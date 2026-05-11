@@ -2,6 +2,12 @@
 
 /*
  * Created with @iobroker/create-adapter v2.0.2
+ *
+ * Letzte Änderung: 2026-05-11
+ *   DHL v2 CIAM-Flow: loginDhlPuppeteer greift den Authorization-Code direkt aus
+ *   dem dhllogin://-Redirect ab (page.on('request')). Der alte loginSuccess-via-
+ *   TLS-Client-Pfad wurde entfernt — DHL gibt seit Mai 2026 dort 400 statt 302.
+ *   Caller in loginDhlNew tauscht den Code direkt gegen Tokens (POST /login/token).
  */
 
 // The adapter-core module gives you access to the core ioBroker functions
@@ -456,89 +462,10 @@ class Parcel extends utils.Adapter {
             return;
           }
 
-          if (puppeteerResult && puppeteerResult.existingToken) {
-            // Token-URL-Flow (Janrain): Complete OAuth2 with existingToken
-            const loginSuccessResp = await this.dhlTlsSession.post(
-              'https://login.dhl.de/af5f9bb6-27ad-4af4-9445-008e7a5cddb8/auth-ui/token-url?' +
-                puppeteerResult.queryString,
-              {
-                headers: {
-                  'Content-Type': 'application/x-www-form-urlencoded',
-                  Origin: 'https://login.dhl.de',
-                  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                  'User-Agent': DHL_USER_AGENT,
-                  Referer: 'https://login.dhl.de/',
-                  'sec-fetch-site': 'same-origin',
-                  'sec-fetch-mode': 'navigate',
-                  'sec-fetch-dest': 'document',
-                },
-                cookies: puppeteerResult.cookieObj,
-                body: new URLSearchParams({
-                  screen: 'loginSuccess',
-                  accessToken: puppeteerResult.existingToken,
-                  _csrf_token: puppeteerResult.csrfToken,
-                }).toString(),
-                followRedirects: false,
-              },
-            );
-
-            let idtoken = '';
-            if (loginSuccessResp.status >= 300 && loginSuccessResp.status < 400) {
-              let location = loginSuccessResp.headers['location'] || loginSuccessResp.headers['Location'] || '';
-              if (Array.isArray(location)) location = location[0];
-              if (String(location).includes('id_token_hint=')) {
-                idtoken = String(location).split('id_token_hint=')[1].split('&')[0];
-              }
-            }
-
-            if (!idtoken) {
-              this.log.error('DHL Puppeteer login: Could not extract id_token_hint from loginSuccess redirect');
-              return;
-            }
-
-            const authorizeWithHintUrl2 =
-              'https://login.dhl.de/af5f9bb6-27ad-4af4-9445-008e7a5cddb8/login/authorize?' +
-              new URLSearchParams({
-                claims: '{"id_token":{"customer_type":null,"deactivate_account":null,"display_name":null,"email":null,"last_login":null,"post_number":null,"service_mask":null,"twofa":null}}',
-                client_id: '83471082-5c13-4fce-8dcb-19d2a3fca413',
-                code_challenge: codeChallenge,
-                code_challenge_method: 'S256',
-                prompt: 'none',
-                redirect_uri: 'dhllogin://de.deutschepost.dhl/login',
-                response_type: 'code',
-                scope: 'openid',
-                state: 'eyJycyI6dHJ1ZSwicnYiOmZhbHNlLCJmaWQiOiJhcHAtbG9naW4tbWVoci1mb290ZXIiLCJoaWQiOiJhcHAtbG9naW4tbWVoci1oZWFkZXIiLCJycCI6ZmFsc2V9',
-                ui_locales: 'de-DE',
-                id_token_hint: idtoken,
-              }).toString();
-
-            let currentUrl2 = authorizeWithHintUrl2;
-            let foundCode2 = false;
-            for (let i = 0; i < 10; i++) {
-              const resp = await this.dhlTlsSession.get(currentUrl2, {
-                headers: { 'User-Agent': DHL_USER_AGENT, Accept: '*/*' },
-                cookies: puppeteerResult.cookieObj,
-                followRedirects: false,
-              });
-              if (resp.status >= 300 && resp.status < 400) {
-                let loc = resp.headers['location'] || resp.headers['Location'] || '';
-                if (Array.isArray(loc)) loc = loc[0];
-                if (String(loc).startsWith('dhllogin://')) {
-                  codeUrl = qs.parse(String(loc).split('?')[1]);
-                  foundCode2 = true;
-                  break;
-                }
-                currentUrl2 = String(loc).startsWith('http') ? String(loc) : 'https://login.dhl.de' + loc;
-              } else {
-                break;
-              }
-            }
-
-            if (!foundCode2) {
-              this.log.error('DHL Puppeteer login: No authorization code received');
-              return;
-            }
-
+          if (puppeteerResult && puppeteerResult.code) {
+            // DHL v2 CIAM-Flow: Puppeteer hat den Authorization-Code direkt aus dem
+            // dhllogin://-Redirect abgegriffen. Direkt gegen Tokens tauschen — der
+            // /login/token Endpoint ist nicht von Akamai geblockt.
             const tokenResp = await this.dhlTlsSession.post(
               'https://login.dhl.de/af5f9bb6-27ad-4af4-9445-008e7a5cddb8/login/token',
               {
@@ -554,13 +481,17 @@ class Parcel extends utils.Adapter {
                   redirect_uri: 'dhllogin://de.deutschepost.dhl/login',
                   grant_type: 'authorization_code',
                   code_verifier: code_verifier,
-                  code: codeUrl.code,
+                  code: puppeteerResult.code,
                 }).toString(),
                 followRedirects: true,
               },
             );
             const tokenData2 = await tokenResp.json();
             this.log.debug(JSON.stringify(tokenData2));
+            if (!tokenData2 || !tokenData2.id_token) {
+              this.log.error('DHL Puppeteer login: Token-Exchange fehlgeschlagen: ' + JSON.stringify(tokenData2).substring(0, 300));
+              return;
+            }
             await this.storeDhlSession(tokenData2);
             return;
           }
@@ -872,6 +803,23 @@ class Parcel extends utils.Adapter {
         }
       });
 
+      // Authorization-Code aus dhllogin://-Redirect abgreifen (DHL v2 CIAM-Flow, ab 2026-05)
+      let capturedCode = null;
+      page.on('request', (req) => {
+        const u = req.url();
+        if (u.startsWith('dhllogin://') && u.includes('code=')) {
+          try {
+            const params = qs.parse(u.split('?')[1] || '');
+            if (params.code && !capturedCode) {
+              capturedCode = String(params.code);
+              this.log.debug('dhllogin://-Redirect abgegriffen, Code: ' + capturedCode.substring(0, 20) + '...');
+            }
+          } catch (e) {
+            this.log.debug('dhllogin://-Parse-Fehler: ' + e.message);
+          }
+        }
+      });
+
       // Step 1: Navigate to authorize URL (same as test script)
       const authorizeParams = new URLSearchParams({
         redirect_uri: 'dhllogin://de.deutschepost.dhl/login',
@@ -995,22 +943,16 @@ class Parcel extends utils.Adapter {
         this.log.debug('Enter gedrueckt');
       }
 
-      // Step 5: Wait for token-url page (up to 30s)
-      this.log.debug('Warte auf Login-Antwort...');
-      let pageUrl = page.url();
-      for (let i = 0; i < 30; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        pageUrl = page.url();
-        if (pageUrl.includes('token-url')) {
-          this.log.debug('Token-url Seite erreicht nach ' + (i + 1) + 's');
-          break;
-        }
-        if (networkLogs.length > 0 && i === 3) {
-          this.log.debug('Network: ' + networkLogs.join(', '));
-        }
+      // Step 5: Warte auf dhllogin://-Redirect (Janrain durchläuft Steps 4-9 selbst,
+      // schliesst mit dhllogin://...?code=... ab — Browser kann's nicht öffnen, aber
+      // wir greifen die URL aus dem Request-Listener oben ab).
+      this.log.debug('Warte auf dhllogin://-Redirect mit Authorization-Code...');
+      const codeWaitStart = Date.now();
+      while (!capturedCode && Date.now() - codeWaitStart < 45000) {
+        await new Promise((r) => setTimeout(r, 500));
       }
 
-      if (!pageUrl.includes('token-url')) {
+      if (!capturedCode) {
         const errorMsgs = await page.evaluate(() => {
           const msgs = [];
           for (const el of document.querySelectorAll('[class*="error"], [role="alert"]')) {
@@ -1027,37 +969,11 @@ class Parcel extends utils.Adapter {
         if (networkLogs.length > 0) {
           this.log.debug('Network logs: ' + networkLogs.join(', '));
         }
-        throw new Error('DHL login timeout. URL: ' + pageUrl.substring(0, 100));
+        throw new Error('DHL login: kein dhllogin://-Redirect mit Code innerhalb 45s erhalten. URL: ' + page.url().substring(0, 100));
       }
 
-      // Step 6: Extract existingToken from token-url page
-      const html = await page.content();
-      const tokenMatch = html.match(/existingToken:\s*'([^']+)'/);
-      if (!tokenMatch) {
-        throw new Error('existingToken not found on token-url page');
-      }
-      const existingToken = tokenMatch[1];
-
-      // Extract csrfToken
-      const cookies = await page.cookies();
-      const csrfCookie = cookies.find((c) => c.name === '_csrf_token');
-      let csrfToken = csrfCookie ? csrfCookie.value : '';
-      if (!csrfToken) {
-        const csrfMatch = html.match(/_csrf_token['"]\s*value=['"](.*?)['"]/);
-        if (csrfMatch) csrfToken = csrfMatch[1];
-      }
-
-      // Transfer browser cookies
-      const cookieObj = {};
-      for (const c of cookies.filter((c) => c.domain.includes('login.dhl'))) {
-        cookieObj[c.name] = c.value;
-      }
-      this.log.debug('Browser cookies transferred: ' + Object.keys(cookieObj).length);
-
-      const queryString = pageUrl.includes('?') ? pageUrl.split('?')[1] : '';
-      this.log.info('Puppeteer login erfolgreich - existingToken extrahiert');
-
-      return { existingToken, csrfToken, cookieObj, queryString };
+      this.log.info('Puppeteer login erfolgreich - Authorization-Code abgegriffen');
+      return { code: capturedCode };
     } finally {
       try {
         await browser.close();

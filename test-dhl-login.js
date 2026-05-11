@@ -360,6 +360,8 @@ async function testDhlLogin(username, password, headless) {
       });
 
       const DHL_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+      const DHL_CLIENT_ID = '83471082-5c13-4fce-8dcb-19d2a3fca413';
+      const DHL_BASIC_AUTH = 'Basic ' + Buffer.from(DHL_CLIENT_ID + ':').toString('base64');
 
       // Transfer browser cookies to TLS session
       const browserCookies = await page.cookies();
@@ -476,7 +478,7 @@ async function testDhlLogin(username, password, headless) {
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
             Accept: 'application/json, text/plain, */*',
-            Authorization: 'Basic ODM0NzEwODItNWMxMy00ZmNlLThkY2ItMTlkMmEzZmNhNDEzOg==',
+            Authorization: DHL_BASIC_AUTH,
             'User-Agent': DHL_UA,
           },
           body: new URLSearchParams({
