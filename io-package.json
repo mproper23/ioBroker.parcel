@@ -209,6 +209,8 @@
     "dpdusername": "",
     "dpdpassword": "",
     "dhlCode": "",
+    "dhlWebLogin": false,
+    "dhlWebCookies": "",
     "17trackKey": "",
     "sendToActive": false,
     "noFirstStartSend": false,
