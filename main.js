@@ -2889,6 +2889,11 @@ class Parcel extends utils.Adapter {
 
   async applyDhlWebCookiesToJar() {
     if (!this.dhlWebSession || !this.dhlWebSession.cookies) return;
+    // Schutz: niemals einen abgelaufenen Web-Token über den gültigen App-Token legen
+    if (this.dhlWebSession.expires_at && this.dhlWebSession.expires_at <= Date.now()) {
+      this.log.debug('Web-Cookies nicht angewendet — Token abgelaufen');
+      return;
+    }
     for (const [name, value] of Object.entries(this.dhlWebSession.cookies)) {
       if (!name || !value) continue;
       try {
@@ -3044,6 +3049,7 @@ class Parcel extends utils.Adapter {
             this.log.info('DHL Web-Session via Silent Renewal aktualisiert');
             return refreshed;
           }
+          this.dhlWebSession = null;
           this.log.info('DHL Web-Refresh fehlgeschlagen — bitte neue Cookies in der Adapter-Config eintragen');
         }
       } catch (e) {
@@ -3061,6 +3067,16 @@ class Parcel extends utils.Adapter {
         );
         const refreshed = await this.refreshDhlWebSession(parsed);
         const final = refreshed || parsed;
+        // Ein abgelaufener Web-Token darf den gültigen App-Token im Cookie-Jar NICHT überschreiben,
+        // sonst liefert die Sendungsabfrage keine Ergebnisse mehr.
+        if (!final.expires_at || final.expires_at <= Date.now()) {
+          this.dhlWebSession = null;
+          this.log.warn(
+            'DHL Web-Cookies sind abgelaufen und konnten nicht erneuert werden — Web-Login bleibt inaktiv, ' +
+              'die App-Sendungsverfolgung läuft normal weiter.',
+          );
+          return null;
+        }
         await this.storeDhlWebSession(final);
         await this.applyDhlWebCookiesToJar();
         return final;
