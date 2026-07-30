@@ -211,6 +211,7 @@
     "dhlCode": "",
     "dhlWebLogin": false,
     "dhlWebCookies": "",
+    "dhlSsoCookies": "",
     "17trackKey": "",
     "sendToActive": false,
     "noFirstStartSend": false,

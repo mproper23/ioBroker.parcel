@@ -157,6 +157,25 @@
         </div>
       </div>
       <div class="row">
+        <div class="col s12 input-field">
+          <p>
+            <b>Automatische Verlängerung (empfohlen):</b> Cookie-Header der Domain
+            <code>login.dhl.de</code> einfügen — er muss <code>aic_sb_…</code> enthalten. Damit
+            holt sich der Adapter bei Bedarf selbst einen neuen dhllogin-Code und hält die
+            SSO-Sitzung alle 12 h rollierend frisch, sodass kein manueller Login mehr nötig ist.
+            (F12 → Netzwerk → eine Anfrage an <code>login.dhl.de</code> → Request-Headers →
+            <code>Cookie:</code> kopieren.)
+          </p>
+          <textarea
+            class="value materialize-textarea"
+            id="dhlSsoCookies"
+            placeholder="aic_sb_af5f9bb6-...=0IND...; __Secure-aic_3psb_...=...; ..."
+            style="min-height: 6rem"
+          ></textarea>
+          <label for="dhlSsoCookies" class="translate">DHL SSO-Cookies (login.dhl.de)</label>
+        </div>
+      </div>
+      <div class="row">
         <div class="col"><h5>Amazon</h5></div>
         <div class="col">
           <input type="checkbox" class="value" id="amzActive" />
