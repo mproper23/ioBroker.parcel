@@ -4,7 +4,8 @@
  * Created with @iobroker/create-adapter v2.0.2
  *
  * Fork mproper23: DHL Web-Cookie-Import + Silent Renewal
- * Basis: Upstream v0.3.3 — letzte Änderung 2026-07-31
+ * Basis: Upstream v0.3.3 — letzte Änderung 2026-09-23
+ * (Briefankündigung: bei DHL-Fehler 60 Min Pause statt Stillstand bis Neustart, Status in info.briefeStatus)
  */
 
 // The adapter-core module gives you access to the core ioBroker functions
@@ -27,6 +28,9 @@ const dhlDecrypt = require('./lib/dhldecrypt');
 const { loginDhlNew: dhlLoginNew } = require('./lib/dhlLogin');
 const { loginDPD: dpdLoginSoap, fetchDPDParcels: dpdFetchParcels } = require('./lib/dpdLogin');
 const { classifyGlsDeliveryStatus } = require('./lib/glsStatus');
+
+// Wartezeit bis zum nächsten Abruf der Briefankündigung nach einem DHL-Fehler
+const BRIEFE_PAUSE_MIN = 60;
 
 const DHL_SSO_AUTHORIZE = 'https://login.dhl.de/af5f9bb6-27ad-4af4-9445-008e7a5cddb8/login/authorize';
 const DHL_APP_CLIENT_ID = '83471082-5c13-4fce-8dcb-19d2a3fca413';
@@ -64,6 +68,8 @@ class Parcel extends utils.Adapter {
     this.images = {};
     this.alreadySentMessages = {};
     this.ignoredPath = [];
+    this.briefePauseBis = 0;
+    this.briefeFehler = null;
     this.firstStart = true;
     this.delivery_status = {
       ERROR: -1,
@@ -1759,6 +1765,11 @@ class Parcel extends utils.Adapter {
           this.log.debug('Ignore: ' + element.path);
           continue;
         }
+        // Briefankündigung nach einem DHL-Fehler nur pausieren, nicht bis zum Neustart abschalten
+        if (element.path === 'dhl.briefe' && this.briefePauseBis && Date.now() < this.briefePauseBis) {
+          this.log.debug('Briefankündigung pausiert bis ' + new Date(this.briefePauseBis).toLocaleString());
+          continue;
+        }
         await requestFn()
           .then(async (res) => {
             this.log.debug(JSON.stringify(res.data));
@@ -1813,6 +1824,14 @@ class Parcel extends utils.Adapter {
                 return sendung.sendungsinfo.sendungsliste !== 'ARCHIVIERT';
               });
             }
+            if (element.path === 'dhl.briefe') {
+              if (this.briefeFehler) {
+                this.log.info('Briefankündigung funktioniert wieder');
+              }
+              this.briefeFehler = null;
+              this.briefePauseBis = 0;
+              this.setState('info.briefeStatus', 'OK', true);
+            }
             //activate briefe token
             if (element.path === 'dhl.briefe' && res.data.grantToken) {
               await this.activateToken(res.data.grantToken, res.data.accessTokenUrl);
@@ -1849,8 +1868,19 @@ class Parcel extends utils.Adapter {
                 return;
               }
               if (element.path === 'dhl.briefe') {
-                this.log.info('Briefankündigung is not working. Stopped until restart');
-                this.ignoredPath.push(element.path);
+                // Früher: ignoredPath bis zum Neustart. DHL-Störungen (HTTP 500 "Aktuell steht der
+                // Service leider nicht zur Verfügung") dauern aber Tage, danach muss es von selbst weitergehen.
+                const body = error.response.data;
+                const headline = Array.isArray(body) && body[0] && body[0].headline ? body[0].headline : '';
+                const fehler = 'HTTP ' + error.response.status + (headline ? ': ' + headline : '');
+                this.briefePauseBis = Date.now() + BRIEFE_PAUSE_MIN * 60 * 1000;
+                this.setState('info.briefeStatus', 'DHL-Fehler (' + fehler + '), nächster Versuch in ' + BRIEFE_PAUSE_MIN + ' Min', true);
+                if (this.briefeFehler !== fehler) {
+                  this.log.warn('Briefankündigung nicht verfügbar (' + fehler + '). Neuer Versuch alle ' + BRIEFE_PAUSE_MIN + ' Min, weitere gleiche Fehler nur im Debug-Log.');
+                }
+                this.briefeFehler = fehler;
+                this.log.debug(element.url + ' ' + JSON.stringify(body));
+                return;
               }
             }
             if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
@@ -3236,6 +3266,18 @@ class Parcel extends utils.Adapter {
         read: true,
         type: 'string',
         role: 'json',
+      },
+      native: {},
+    });
+    // Liegt bewusst unter info.*, weil cleanupProvider den Zweig dhl.briefe komplett neu aufbaut.
+    await this.setObjectNotExistsAsync('info.briefeStatus', {
+      type: 'state',
+      common: {
+        name: 'Status DHL Briefankündigung (Zeitstempel = letzter Abrufversuch)',
+        write: false,
+        read: true,
+        type: 'string',
+        role: 'text',
       },
       native: {},
     });
